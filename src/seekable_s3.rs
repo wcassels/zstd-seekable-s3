@@ -14,7 +14,7 @@ pub struct SeekableS3Object<'a, A> {
     // Updated when we first read the object.
     length: u64,
     body: Option<Pin<Box<dyn AsyncRead + Send>>>,
-    runtime: &'a tokio::runtime::Runtime,
+    handle: &'a tokio::runtime::Handle,
     // Limit reads to this amount of time.
     read_timeout: Option<std::time::Duration>,
 }
@@ -26,7 +26,7 @@ impl<A: std::fmt::Debug> std::fmt::Debug for SeekableS3Object<'_, A> {
             .field("req", &self.req)
             .field("position", &self.position)
             .field("length", &self.length)
-            .field("runtime", &self.runtime)
+            .field("handle", &self.handle)
             .finish()
     }
 }
@@ -34,7 +34,7 @@ impl<A: std::fmt::Debug> std::fmt::Debug for SeekableS3Object<'_, A> {
 impl<'a, A> SeekableS3Object<'a, A> {
     pub fn new(
         client: A,
-        runtime: &'a tokio::runtime::Runtime,
+        handle: &'a tokio::runtime::Handle,
         read_timeout: Option<std::time::Duration>,
         mut req: GetObjectRequest,
     ) -> Result<Result<Self, RusotoError<GetObjectError>>, tokio::time::error::Elapsed>
@@ -49,10 +49,10 @@ impl<'a, A> SeekableS3Object<'a, A> {
 
         let object = match read_timeout {
             Some(timeout) => {
-                let _executor = runtime.enter();
-                runtime.block_on(tokio::time::timeout(timeout, get_object))?
+                let _executor = handle.enter();
+                handle.block_on(tokio::time::timeout(timeout, get_object))?
             }
-            None => runtime.block_on(get_object),
+            None => handle.block_on(get_object),
         };
 
         let object = match object {
@@ -93,7 +93,7 @@ impl<'a, A> SeekableS3Object<'a, A> {
             position: 0,
             length,
             body,
-            runtime,
+            handle,
             read_timeout,
         }))
     }
@@ -116,9 +116,9 @@ impl<'a, A> SeekableS3Object<'a, A> {
         if let Some(body) = &mut self.body {
             let bytes_read = match self.read_timeout {
                 Some(timeout) => {
-                    let _executor = self.runtime.enter();
+                    let _executor = self.handle.enter();
                     match self
-                        .runtime
+                        .handle
                         .block_on(tokio::time::timeout(timeout, body.read(buf)))
                     {
                         Ok(r) => r,
@@ -126,7 +126,7 @@ impl<'a, A> SeekableS3Object<'a, A> {
                     }
                 }
 
-                None => self.runtime.block_on(body.read(buf)),
+                None => self.handle.block_on(body.read(buf)),
             }?;
             // If we managed to read something, make sure to update position.
             // This saves us work if we something calls seek into the new
@@ -176,16 +176,16 @@ where
 
         let object = match self.read_timeout {
             Some(timeout) => {
-                let _executor = self.runtime.enter();
+                let _executor = self.handle.enter();
                 match self
-                    .runtime
+                    .handle
                     .block_on(tokio::time::timeout(timeout, get_object))
                 {
                     Ok(r) => r,
                     Err(timeout_err) => Err(Error::new(ErrorKind::TimedOut, timeout_err)),
                 }
             }
-            None => self.runtime.block_on(get_object),
+            None => self.handle.block_on(get_object),
         }?;
 
         self.body = object
@@ -231,7 +231,7 @@ impl<A> Seek for SeekableS3Object<'_, A> {
 pub trait GetSeekableObject: Sized {
     fn get_seekable_object(
         self,
-        runtime: &tokio::runtime::Runtime,
+        handle: &tokio::runtime::Handle,
         read_timeout: Option<std::time::Duration>,
         input: GetObjectRequest,
     ) -> Result<
@@ -243,13 +243,13 @@ pub trait GetSeekableObject: Sized {
 impl GetSeekableObject for S3Client {
     fn get_seekable_object(
         self,
-        runtime: &tokio::runtime::Runtime,
+        handle: &tokio::runtime::Handle,
         read_timeout: Option<std::time::Duration>,
         input: GetObjectRequest,
     ) -> Result<
         Result<SeekableS3Object<'_, Self>, RusotoError<GetObjectError>>,
         tokio::time::error::Elapsed,
     > {
-        SeekableS3Object::new(self, runtime, read_timeout, input)
+        SeekableS3Object::new(self, handle, read_timeout, input)
     }
 }
