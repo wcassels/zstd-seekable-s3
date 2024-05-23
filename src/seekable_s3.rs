@@ -146,7 +146,7 @@ impl<'a, A> SeekableS3Object<'a, A> {
     }
 }
 
-impl<'a, A> Read for SeekableS3Object<'_, A>
+impl<A> Read for SeekableS3Object<'_, A>
 where
     A: S3,
 {
