@@ -7,19 +7,19 @@ use std::pin::Pin;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 
-pub struct SeekableS3Object<'a, A> {
+pub struct SeekableS3Object<A> {
     client: A,
     req: GetObjectRequest,
     position: u64,
     // Updated when we first read the object.
     length: u64,
     body: Option<Pin<Box<dyn AsyncRead + Send>>>,
-    handle: &'a tokio::runtime::Handle,
+    handle: tokio::runtime::Handle,
     // Limit reads to this amount of time.
     read_timeout: Option<std::time::Duration>,
 }
 
-impl<A: std::fmt::Debug> std::fmt::Debug for SeekableS3Object<'_, A> {
+impl<A: std::fmt::Debug> std::fmt::Debug for SeekableS3Object<A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SeekableS3Object")
             .field("client", &self.client)
@@ -31,10 +31,10 @@ impl<A: std::fmt::Debug> std::fmt::Debug for SeekableS3Object<'_, A> {
     }
 }
 
-impl<'a, A> SeekableS3Object<'a, A> {
+impl<A> SeekableS3Object<A> {
     pub fn new(
         client: A,
-        handle: &'a tokio::runtime::Handle,
+        handle: tokio::runtime::Handle,
         read_timeout: Option<std::time::Duration>,
         mut req: GetObjectRequest,
     ) -> Result<Result<Self, RusotoError<GetObjectError>>, tokio::time::error::Elapsed>
@@ -146,7 +146,7 @@ impl<'a, A> SeekableS3Object<'a, A> {
     }
 }
 
-impl<A> Read for SeekableS3Object<'_, A>
+impl<A> Read for SeekableS3Object<A>
 where
     A: S3,
 {
@@ -196,7 +196,7 @@ where
     }
 }
 
-impl<A> Seek for SeekableS3Object<'_, A> {
+impl<A> Seek for SeekableS3Object<A> {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         // Implementation roughly lifted from std::io::cursor Seek trait
         // implementation.
@@ -231,11 +231,11 @@ impl<A> Seek for SeekableS3Object<'_, A> {
 pub trait GetSeekableObject: Sized {
     fn get_seekable_object(
         self,
-        handle: &tokio::runtime::Handle,
+        handle: tokio::runtime::Handle,
         read_timeout: Option<std::time::Duration>,
         input: GetObjectRequest,
     ) -> Result<
-        Result<SeekableS3Object<'_, Self>, RusotoError<GetObjectError>>,
+        Result<SeekableS3Object<Self>, RusotoError<GetObjectError>>,
         tokio::time::error::Elapsed,
     >;
 }
@@ -243,11 +243,11 @@ pub trait GetSeekableObject: Sized {
 impl GetSeekableObject for S3Client {
     fn get_seekable_object(
         self,
-        handle: &tokio::runtime::Handle,
+        handle: tokio::runtime::Handle,
         read_timeout: Option<std::time::Duration>,
         input: GetObjectRequest,
     ) -> Result<
-        Result<SeekableS3Object<'_, Self>, RusotoError<GetObjectError>>,
+        Result<SeekableS3Object<Self>, RusotoError<GetObjectError>>,
         tokio::time::error::Elapsed,
     > {
         SeekableS3Object::new(self, handle, read_timeout, input)
